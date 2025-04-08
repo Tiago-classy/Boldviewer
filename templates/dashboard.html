@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+
+<div class="container">
+    <div class="header">
+        <h1>Files</h1>
+    </div>
+
+    <!-- Breadcrumb -->
+    <nav class="breadcrumb">
+        <a href="{{ url_for('main.dashboard') }}">Home</a>
+        {% for crumb in breadcrumbs %}
+            <span>/</span>
+            <a href="{{ crumb.url }}">{{ crumb.name }}</a>
+        {% endfor %}
+    </nav>
+
+    <!-- Files Grid -->
+    <div class="files-grid">
+        <!-- Folders -->
+        {% for folder in s3_contents.folders %}
+            <div class="file-card">
+                <a href="{{ url_for('main.dashboard', prefix=folder) }}">
+                    <div class="file-thumbnail">
+                        <div class="file-icon">📁</div>
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name">{{ folder.rstrip('/').split('/')[-1] }}</div>
+                    </div>
+                </a>
+            </div>
+        {% endfor %}
+
+        <!-- Files -->
+        {% for file in s3_contents.files %}
+            <div class="file-card">
+                <a href="{{ url_for('main.view_file', filename=file) }}">
+                    <div class="file-thumbnail">
+                        {% if file.lower().endswith('.mp4') %}
+                            <img src="{{ url_for('main.get_video_thumbnail', filename=file) }}" 
+                                 alt="Video thumbnail"
+                                 onerror="this.parentElement.innerHTML='<div class=\'file-icon\'>🎥</div>'">
+                        {% elif file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')) %}
+                            <img src="{{ url_for('main.get_image_thumbnail', filename=file) }}"
+                                 alt="Image thumbnail"
+                                 onerror="this.parentElement.innerHTML='<div class=\'file-icon\'>🖼️</div>'">
+                        {% else %}
+                            <div class="file-icon">📄</div>
+                        {% endif %}
+                    </div>
+                    <div class="file-info">
+                        <div class="file-name">{{ file.split('/')[-1].split('3')[0] }}</div>
+                    </div>
+                </a>
+            </div>
+        {% endfor %}
+    </div>
+
+    {% if not s3_contents.folders and not s3_contents.files %}
+        <div class="empty-state">
+            <div class="icon">📂</div>
+            <h3>No files or folders found</h3>
+            <p>This folder is empty</p>
+        </div>
+    {% endif %}
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const thumbnails = document.querySelectorAll('.file-thumbnail img');
+        thumbnails.forEach(img => {
+            img.style.opacity = '0';
+            img.addEventListener('load', function() {
+                this.style.transition = 'opacity 0.3s';
+                this.style.opacity = '1';
+            });
+        });
+    });
+</script>
+{% endblock %}

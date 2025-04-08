@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}View File{% endblock %}
+
+{% block content %}
+    <div class="container">
+        <!-- Breadcrumb -->
+        <nav class="breadcrumb">
+            <a href="{{ url_for('main.dashboard') }}">Home</a>
+            {% for folder in path %}
+                <span>/</span>
+                <a href="{{ url_for('main.dashboard', prefix=folder.path) }}">{{ folder.name }}</a>
+            {% endfor %}
+            <span>/</span>
+            <span>{{ filename.split('/')[-1] }}</span>
+        </nav>
+
+        <!-- Buttons -->
+        <div class="top-buttons">
+            {% set parent_path = '/'.join(filename.split('/')[:-1]) %}
+            <a href="{{ url_for('main.dashboard', prefix=parent_path) }}" class="btn back-btn">⬅ Go Back</a>
+            <a href="{{ file_url }}" download class="btn download-btn">⬇ Download</a>
+        </div>
+
+        <!-- File Preview -->
+        <div class="file-preview">
+            {% if file_type == 'image' %}
+                <img src="{{ file_url }}" alt="Image Preview" loading="lazy">
+            {% elif file_type == 'video' %}
+                <video 
+                    id="my-video"
+                    class="video-js vjs-big-play-centered"
+                    controls
+                    preload="auto"
+                    data-setup='{}'>
+                    <source src="{{ file_url }}" type="video/mp4">
+                    <source src="{{ file_url }}" type="video/webm">
+                    <p class="vjs-no-js">Your browser doesn't support HTML5 video.</p>
+                </video>
+            {% else %}
+                <div class="unsupported-file">
+                    <div class="icon">📄</div>
+                    <p>This file format is not supported for preview. Download to view it.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script nonce="{{ nonce }}">
+        if (document.querySelector('#my-video')) {
+            var player = videojs('my-video');
+        }
+
+        document.querySelectorAll('img').forEach(img => {
+            img.onerror = function() {
+                this.parentElement.innerHTML = `
+                    <div class="unsupported-file">
+                        <div class="icon">🖼️</div>
+                        <p>Unable to load image.</p>
+                        <p>Please try downloading the file.</p>
+                    </div>
+                `;
+            };
+        });
+    </script>
+{% endblock %}

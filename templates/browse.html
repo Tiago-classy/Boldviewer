@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Explorer</title>
+    <style>
+        .breadcrumb { margin-bottom: 10px; }
+        .breadcrumb a { text-decoration: none; margin-right: 5px; }
+        .folder { font-weight: bold; cursor: pointer; }
+        .thumbnail { width: 100px; height: auto; }
+    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+    <!-- Breadcrumb Navigation -->
+    <div class="breadcrumb">
+        <a href="{{ url_for('main.browse_folder') }}">Home</a>
+        {% for crumb in breadcrumbs %}
+            / <a href="{{ crumb.url }}">{{ crumb.name }}</a>
+        {% endfor %}
+    </div>
+
+    <!-- Folder Previews -->
+    <h3>Folders</h3>
+    <ul>
+        {% for folder in folders %}
+            <li class="folder">
+                <a href="{{ url_for('main.browse_folder', folder_path=folder) }}">{{ folder.split('/')[-2] }}</a>
+            </li>
+        {% endfor %}
+    </ul>
+
+    <!-- File Previews -->
+    <h3>Files</h3>
+    <ul>
+        {% for file in files %}
+            <li>
+                {% if file.endswith(('.png', '.jpg', '.jpeg', '.gif')) %}
+                    <img src="{{ url_for('main.view_file', filename=file) }}" class="thumbnail">
+                {% else %}
+                    <a href="{{ url_for('main.view_file', filename=file) }}">{{ file.split('/')[-1]}}</a>
+                {% endif %}
+            </li>
+        {% endfor %}
+    </ul>
+
+</body>
+</html>
