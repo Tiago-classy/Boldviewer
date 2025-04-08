@@ -29,8 +29,6 @@ def inject_nonce():
 
 @app.after_request
 def add_security_headers(response):
-    response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
-
     for header, value in Config.SECURITY_HEADERS.items():
         response.headers[header] = value
     return response
