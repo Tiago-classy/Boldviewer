@@ -282,18 +282,24 @@ def view_file(filename):
 @login_required
 def get_thumbnail(filename):
     try:
+        current_app.logger.info(f"Thumbnail requested for: {filename}")
+        
         # Determine if it's a video or image
         mime_type, _ = mimetypes.guess_type(filename)
         is_video = mime_type and mime_type.startswith('video/')
+        
+        current_app.logger.info(f"File type detected: {'video' if is_video else 'image'}, mime: {mime_type}")
         
         prefix = 'video_thumb_' if is_video else 'img_thumb_'
         thumbnail_path = thumbnail_generator.get_thumbnail_path(filename, prefix)
         
         # If thumbnail exists and is fresh, serve it
         if thumbnail_generator.thumbnail_exists_and_fresh(thumbnail_path):
+            current_app.logger.info(f"Serving cached thumbnail: {thumbnail_path}")
             return send_file(thumbnail_path, mimetype='image/jpeg')
         
         # Start async generation
+        current_app.logger.info(f"Starting async thumbnail generation for: {filename}")
         thumbnail_generator.generate_thumbnail_async(filename, is_video)
         
         # Return appropriate placeholder
@@ -302,14 +308,25 @@ def get_thumbnail(filename):
         placeholder_path = os.path.join(current_app.static_folder, 'images', placeholder_name)
         
         if os.path.exists(placeholder_path):
+            current_app.logger.info(f"Serving static placeholder: {placeholder_path}")
             return send_file(placeholder_path, mimetype='image/jpeg')
         
         # Generate placeholder on the fly
-        return send_file(get_placeholder_bytes(file_type), mimetype='image/jpeg')
+        current_app.logger.info("Generating placeholder on the fly")
+        placeholder_bytes = get_placeholder_bytes(file_type)
+        return send_file(placeholder_bytes, mimetype='image/jpeg')
         
     except Exception as e:
-        current_app.logger.error(f"Error serving thumbnail: {str(e)}")
-        return '', 404
+        current_app.logger.error(f"Error serving thumbnail for {filename}: {str(e)}")
+        import traceback
+        current_app.logger.error(traceback.format_exc())
+        
+        # Return a basic error placeholder
+        try:
+            error_placeholder = get_placeholder_bytes('error')
+            return send_file(error_placeholder, mimetype='image/jpeg')
+        except:
+            return '', 404
 
 @main.route('/check-thumbnail/<path:filename>')
 @login_required
@@ -324,10 +341,43 @@ def check_thumbnail(filename):
         ready = thumbnail_generator.thumbnail_exists_and_fresh(thumbnail_path)
         processing = filename in thumbnail_generator.processing_queue
         
+        current_app.logger.info(f"Thumbnail check for {filename}: ready={ready}, processing={processing}")
+        
         return jsonify({
             'ready': ready,
             'processing': processing,
-            'url': url_for('main.get_thumbnail', filename=filename) if ready else None
+            'url': url_for('main.get_thumbnail', filename=filename) if ready else None,
+            'thumbnail_path': thumbnail_path,
+            'file_exists': os.path.exists(thumbnail_path) if thumbnail_path else False
         })
     except Exception as e:
+        current_app.logger.error(f"Error checking thumbnail for {filename}: {str(e)}")
         return jsonify({'ready': False, 'processing': False, 'error': str(e)})
+
+@main.route('/debug/thumbnails')
+@login_required
+def debug_thumbnails():
+    """Debug endpoint to check thumbnail system"""
+    try:
+        temp_dir = thumbnail_generator.temp_dir
+        thumbnails = []
+        
+        if os.path.exists(temp_dir):
+            for file in os.listdir(temp_dir):
+                if file.startswith(('img_thumb_', 'video_thumb_')):
+                    file_path = os.path.join(temp_dir, file)
+                    thumbnails.append({
+                        'name': file,
+                        'size': os.path.getsize(file_path),
+                        'modified': os.path.getmtime(file_path)
+                    })
+        
+        return jsonify({
+            'temp_dir': temp_dir,
+            'temp_dir_exists': os.path.exists(temp_dir),
+            'thumbnails': thumbnails,
+            'processing_queue': list(thumbnail_generator.processing_queue),
+            'ffmpeg_available': os.system('which ffmpeg') == 0
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})

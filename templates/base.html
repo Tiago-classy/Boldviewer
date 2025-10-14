@@ -3,30 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %} BOLD VIEWER{% endblock %}</title>
+    <title>{% block title %}BOLD VIEWER{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <!-- Add any additional links or scripts -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📁</text></svg>">
+    {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <header>
-        <!-- Your navbar goes here -->
-        <nav>
-            <a href="{{ url_for('main.dashboard') }}">Dashboard</a>
-            <a href="{{ url_for('auth.logout') }}">Logout</a>
+    <header class="main-header">
+        <nav class="navbar">
+            <div class="nav-container">
+                <div class="nav-brand">
+                    <a href="{{ url_for('main.dashboard') }}" class="brand-link">
+                        <span class="brand-text">BOLD</span>
+                        <span class="brand-subtitle">VIEWER</span>
+                    </a>
+                </div>
+                <div class="nav-menu">
+                    <a href="{{ url_for('main.dashboard') }}" class="nav-link">
+                        <span class="nav-icon">📁</span>
+                        Files
+                    </a>
+                    <a href="{{ url_for('auth.logout') }}" class="nav-link logout">
+                        <span class="nav-icon">🚪</span>
+                        Logout
+                    </a>
+                </div>
+            </div>
         </nav>
     </header>
 
-    <!-- Main Content -->
-    <main>
+    <main class="main-content">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="flash-message flash-{{ category }}">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+        
         {% block content %}{% endblock %}
     </main>
 
-    <footer>
-        <!-- Your footer content -->
-        <p>© 2025 BOLD</p>
+    <footer class="main-footer">
+        <div class="footer-container">
+            <p class="footer-text">© 2025 BOLD VIEWER. All rights reserved.</p>
+        </div>
     </footer>
 
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-    <!-- Any additional scripts -->
+    {% block extra_js %}{% endblock %}
 </body>
 </html>

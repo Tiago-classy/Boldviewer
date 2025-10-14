@@ -13,11 +13,13 @@ def apply_csp(response):
     csp = (
         f"default-src 'self'; "
         f"script-src 'self' 'nonce-{nonce}'; "
-        f"style-src 'self'; "
+        f"style-src 'self' https://fonts.googleapis.com; "
+        f"font-src 'self' https://fonts.gstatic.com; "
         f"img-src 'self' https://ic4u-ig-videos.s3.amazonaws.com data:; "
         f"media-src 'self' https://ic4u-ig-videos.s3.amazonaws.com;"
     )
     response.headers['Content-Security-Policy'] = csp
+    response.headers['Permissions-Policy'] = 'unload=()'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     response.headers['Referrer-Policy'] = 'no-referrer'
