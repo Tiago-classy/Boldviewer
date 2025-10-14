@@ -3,16 +3,18 @@ import time
 import tempfile
 import mimetypes
 import subprocess
+import threading
+import hashlib
 from io import BytesIO
 from PIL import Image
-from flask import Blueprint, render_template, request, send_file, current_app, flash, url_for,redirect
-from flask import redirect
+from flask import Blueprint, render_template, request, send_file, current_app, flash, url_for, redirect, jsonify
 from flask_login import login_required
 from werkzeug.utils import secure_filename
 import boto3
 from botocore.exceptions import ClientError
 from config import Config
 from utils.s3_utils import list_s3_contents, generate_presigned_url
+from utils.placeholder_generator import get_placeholder_bytes, ensure_placeholder_files
 
 # Constants
 BUCKET_NAME = 'ic4u-ig-videos'
@@ -33,21 +35,25 @@ s3 = boto3.client(
 class ThumbnailGenerator:
     def __init__(self, bucket_name, s3_client):
         self.bucket_name = bucket_name
-        self.temp_dir = tempfile.gettempdir()
+        self.temp_dir = os.path.join(tempfile.gettempdir(), 'thumbnails')
+        os.makedirs(self.temp_dir, exist_ok=True)
         self.s3 = s3_client
-        self.max_thumbnail_size = (640, 640)
+        self.max_thumbnail_size = (300, 300)
+        self.processing_queue = set()
+        self.cache_duration = 86400 * 7  # 7 days
 
     def get_thumbnail_path(self, filename, prefix='thumb_'):
         """Generate the thumbnail path for a given filename"""
-        safe_filename = secure_filename(filename)
-        return os.path.join(self.temp_dir, f"{prefix}{safe_filename}.jpg")
+        # Use hash for consistent naming and avoid path issues
+        file_hash = hashlib.md5(filename.encode()).hexdigest()
+        return os.path.join(self.temp_dir, f"{prefix}{file_hash}.jpg")
 
-    def thumbnail_exists_and_fresh(self, thumbnail_path, max_age=86400):
+    def thumbnail_exists_and_fresh(self, thumbnail_path):
         """Check if thumbnail exists and is fresh"""
         try:
             if os.path.exists(thumbnail_path):
                 file_age = time.time() - os.path.getmtime(thumbnail_path)
-                return file_age < max_age
+                return file_age < self.cache_duration
         except Exception:
             pass
         return False
@@ -56,17 +62,13 @@ class ThumbnailGenerator:
         """Generate thumbnail for image"""
         try:
             with Image.open(BytesIO(image_data)) as img:
-                # Convert RGBA to RGB if necessary
                 if img.mode in ('RGBA', 'LA'):
                     background = Image.new('RGB', img.size, 'white')
                     background.paste(img, mask=img.split()[-1])
                     img = background
                 
-                # Resize image maintaining aspect ratio
                 img.thumbnail(self.max_thumbnail_size, Image.Resampling.LANCZOS)
-                
-                # Save with optimized quality
-                img.save(thumbnail_path, 'JPEG', quality=85, optimize=True)
+                img.save(thumbnail_path, 'JPEG', quality=75, optimize=True)
         except Exception as e:
             current_app.logger.error(f"Error generating image thumbnail: {str(e)}")
             raise
@@ -75,23 +77,13 @@ class ThumbnailGenerator:
         """Generate thumbnail for video"""
         try:
             command = [
-                'ffmpeg',
-                '-i', video_path,
-                '-ss', '00:00:01',  # Take frame from 1 second
-                '-vframes', '1',
+                'ffmpeg', '-i', video_path, '-ss', '00:00:01', '-vframes', '1',
                 '-vf', f'scale={self.max_thumbnail_size[0]}:-1',
-                '-y',
-                thumbnail_path
+                '-q:v', '5', '-y', thumbnail_path
             ]
             
-            result = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=True
-            )
+            subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             
-            # Verify thumbnail was created
             if not os.path.exists(thumbnail_path) or os.path.getsize(thumbnail_path) == 0:
                 raise Exception("Failed to generate video thumbnail")
                 
@@ -107,9 +99,67 @@ class ThumbnailGenerator:
         except Exception as e:
             current_app.logger.error(f"Error getting S3 object: {str(e)}")
             raise
+    
+    def generate_thumbnail_async(self, filename, is_video=False):
+        """Generate thumbnail asynchronously"""
+        if filename in self.processing_queue:
+            return
+        
+        self.processing_queue.add(filename)
+        
+        def process():
+            try:
+                prefix = 'video_thumb_' if is_video else 'img_thumb_'
+                thumbnail_path = self.get_thumbnail_path(filename, prefix)
+                
+                if self.thumbnail_exists_and_fresh(thumbnail_path):
+                    return
+                
+                if is_video:
+                    temp_video = os.path.join(tempfile.gettempdir(), f"temp_{hashlib.md5(filename.encode()).hexdigest()}.mp4")
+                    try:
+                        video_data = self.get_s3_object(filename)
+                        with open(temp_video, 'wb') as f:
+                            f.write(video_data)
+                        self.generate_video_thumbnail(temp_video, thumbnail_path)
+                    finally:
+                        if os.path.exists(temp_video):
+                            os.remove(temp_video)
+                else:
+                    image_data = self.get_s3_object(filename)
+                    self.generate_image_thumbnail(image_data, thumbnail_path)
+                    
+            except Exception as e:
+                current_app.logger.error(f"Async thumbnail generation failed for {filename}: {str(e)}")
+            finally:
+                self.processing_queue.discard(filename)
+        
+        threading.Thread(target=process, daemon=True).start()
+    
+    def cleanup_old_thumbnails(self):
+        """Clean up old thumbnail files"""
+        try:
+            current_time = time.time()
+            for filename in os.listdir(self.temp_dir):
+                if filename.startswith(('img_thumb_', 'video_thumb_')):
+                    filepath = os.path.join(self.temp_dir, filename)
+                    if os.path.isfile(filepath):
+                        file_age = current_time - os.path.getmtime(filepath)
+                        if file_age > self.cache_duration:
+                            os.remove(filepath)
+                            current_app.logger.info(f"Removed old thumbnail: {filename}")
+        except Exception as e:
+            current_app.logger.error(f"Error cleaning up thumbnails: {str(e)}")
 
 # Initialize the thumbnail generator
 thumbnail_generator = ThumbnailGenerator(BUCKET_NAME, s3)
+
+# Ensure placeholder files exist and setup cleanup
+@main.before_app_request
+def setup_placeholders():
+    ensure_placeholder_files(current_app.static_folder)
+    # Clean up old thumbnails on startup
+    thumbnail_generator.cleanup_old_thumbnails()
 @main.route("/dashboard", defaults={"prefix": ""})
 @main.route("/dashboard/<path:prefix>")
 @login_required
@@ -226,89 +276,58 @@ def view_file(filename):
         return redirect(url_for('main.dashboard'))
 
 
-@main.route("/dashboard/<path:folder_path>")
-@main.route("/dashboard", defaults={"folder_path": ""})
+
+
+@main.route('/thumbnail/<path:filename>')
 @login_required
-def browse_folder(folder_path):
-    folder_path = folder_path.rstrip("/") + "/" if folder_path else ""
-    s3_contents = list_s3_contents(folder_path)
-    objects = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=folder_path, Delimiter="/")
+def get_thumbnail(filename):
+    try:
+        # Determine if it's a video or image
+        mime_type, _ = mimetypes.guess_type(filename)
+        is_video = mime_type and mime_type.startswith('video/')
+        
+        prefix = 'video_thumb_' if is_video else 'img_thumb_'
+        thumbnail_path = thumbnail_generator.get_thumbnail_path(filename, prefix)
+        
+        # If thumbnail exists and is fresh, serve it
+        if thumbnail_generator.thumbnail_exists_and_fresh(thumbnail_path):
+            return send_file(thumbnail_path, mimetype='image/jpeg')
+        
+        # Start async generation
+        thumbnail_generator.generate_thumbnail_async(filename, is_video)
+        
+        # Return appropriate placeholder
+        file_type = 'video' if is_video else 'image'
+        placeholder_name = f'{file_type}-placeholder.jpg'
+        placeholder_path = os.path.join(current_app.static_folder, 'images', placeholder_name)
+        
+        if os.path.exists(placeholder_path):
+            return send_file(placeholder_path, mimetype='image/jpeg')
+        
+        # Generate placeholder on the fly
+        return send_file(get_placeholder_bytes(file_type), mimetype='image/jpeg')
+        
+    except Exception as e:
+        current_app.logger.error(f"Error serving thumbnail: {str(e)}")
+        return '', 404
 
-    folders = [obj["Prefix"] for obj in objects.get("CommonPrefixes", [])]
-    files = [obj["Key"] for obj in objects.get("Contents", []) if obj["Key"] != folder_path]
-
-    breadcrumbs = []
-    path_parts = folder_path.strip("/").split("/") if folder_path else []
-    for i, part in enumerate(path_parts):
-        breadcrumbs.append({
-            "name": part,
-            "url": "/dashboard/" + "/".join(path_parts[:i+1])
+@main.route('/check-thumbnail/<path:filename>')
+@login_required
+def check_thumbnail(filename):
+    """Check if thumbnail is ready"""
+    try:
+        mime_type, _ = mimetypes.guess_type(filename)
+        is_video = mime_type and mime_type.startswith('video/')
+        prefix = 'video_thumb_' if is_video else 'img_thumb_'
+        thumbnail_path = thumbnail_generator.get_thumbnail_path(filename, prefix)
+        
+        ready = thumbnail_generator.thumbnail_exists_and_fresh(thumbnail_path)
+        processing = filename in thumbnail_generator.processing_queue
+        
+        return jsonify({
+            'ready': ready,
+            'processing': processing,
+            'url': url_for('main.get_thumbnail', filename=filename) if ready else None
         })
-    
-    return render_template(
-        "dashboard.html",
-        s3_contents=s3_contents,
-        folders=folders,
-        files=files,
-        breadcrumbs=breadcrumbs
-    )
-
-@main.route('/image-thumbnail/<path:filename>')
-@login_required
-def get_image_thumbnail(filename):
-    try:
-        thumbnail_path = thumbnail_generator.get_thumbnail_path(filename, prefix='img_thumb_')
-        
-        # Check for existing thumbnail
-        if thumbnail_generator.thumbnail_exists_and_fresh(thumbnail_path):
-            return send_file(thumbnail_path, mimetype='image/jpeg')
-
-        # Generate new thumbnail
-        image_data = thumbnail_generator.get_s3_object(filename)
-        thumbnail_generator.generate_image_thumbnail(image_data, thumbnail_path)
-        
-        return send_file(thumbnail_path, mimetype='image/jpeg')
-
     except Exception as e:
-        current_app.logger.error(f"Error in get_image_thumbnail: {str(e)}")
-        return send_file('static/images/image-placeholder.png', mimetype='image/png')
-
-@main.route('/video-thumbnail/<path:filename>')
-@login_required
-def get_video_thumbnail(filename):
-    try:
-        thumbnail_path = thumbnail_generator.get_thumbnail_path(filename, prefix='vid_thumb_')
-        
-        # Check for existing thumbnail
-        if thumbnail_generator.thumbnail_exists_and_fresh(thumbnail_path):
-            return send_file(thumbnail_path, mimetype='image/jpeg')
-
-        # Download video and generate thumbnail
-        temp_video = os.path.join(thumbnail_generator.temp_dir, secure_filename(filename))
-        try:
-            # Download video file
-            thumbnail_generator.s3.download_file(BUCKET_NAME, filename, temp_video)
-            
-            # Generate thumbnail
-            thumbnail_generator.generate_video_thumbnail(temp_video, thumbnail_path)
-            
-            if os.path.exists(thumbnail_path):
-                return send_file(thumbnail_path, mimetype='image/jpeg')
-            else:
-                raise Exception("Thumbnail generation failed")
-
-        except Exception as e:
-            current_app.logger.error(f"Error generating video thumbnail: {str(e)}")
-            return send_file('static/images/video-placeholder.jpg', mimetype='image/jpeg')
-
-        finally:
-            # Clean up temporary video file
-            if os.path.exists(temp_video):
-                try:
-                    os.remove(temp_video)
-                except Exception:
-                    pass
-
-    except Exception as e:
-        current_app.logger.error(f"Error in get_video_thumbnail: {str(e)}")
-        return send_file('static/images/video-placeholder.jpg', mimetype='image/jpeg')
+        return jsonify({'ready': False, 'processing': False, 'error': str(e)})

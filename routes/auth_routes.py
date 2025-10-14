@@ -6,10 +6,9 @@ from datetime import datetime, timedelta  # Add this import
 
 auth = Blueprint("auth", __name__)
 
-# Initialize with multiple users
 users = {
     "admin": {
-        "password": bcrypt.hashpw("0192023a7bbd73250516f069df18b500".encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),
+        "password": bcrypt.hashpw("v".encode('utf-8'), bcrypt.gensalt()).decode('utf-8'),
         "role": "admin"
     },
     "tigas": {
@@ -80,7 +79,6 @@ def root():
 
 @auth.route('/login', methods=['GET', 'POST'])
 def login():
-    # Redirect if user is already logged in
     if current_user.is_authenticated:
         return redirect(url_for('main.dashboard'))
 

@@ -37,21 +37,21 @@
         {% for file in s3_contents.files %}
             <div class="file-card">
                 <a href="{{ url_for('main.view_file', filename=file) }}">
-                    <div class="file-thumbnail">
-                        {% if file.lower().endswith('.mp4') %}
-                            <img src="{{ url_for('main.get_video_thumbnail', filename=file) }}" 
-                                 alt="Video thumbnail"
-                                 onerror="this.parentElement.innerHTML='<div class=\'file-icon\'>🎥</div>'">
-                        {% elif file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')) %}
-                            <img src="{{ url_for('main.get_image_thumbnail', filename=file) }}"
-                                 alt="Image thumbnail"
-                                 onerror="this.parentElement.innerHTML='<div class=\'file-icon\'>🖼️</div>'">
+                    <div class="file-thumbnail" data-filename="{{ file }}">
+                        {% if file.lower().endswith(('.mp4', '.webm', '.ogg')) %}
+                            <div class="file-icon loading">🎥</div>
+                            <img class="lazy-thumbnail" data-src="{{ url_for('main.get_thumbnail', filename=file) }}" 
+                                 alt="Video thumbnail" style="display: none;">
+                        {% elif file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')) %}
+                            <div class="file-icon loading">🖼️</div>
+                            <img class="lazy-thumbnail" data-src="{{ url_for('main.get_thumbnail', filename=file) }}"
+                                 alt="Image thumbnail" style="display: none;">
                         {% else %}
                             <div class="file-icon">📄</div>
                         {% endif %}
                     </div>
                     <div class="file-info">
-                        <div class="file-name">{{ file.split('/')[-1].split('3')[0] }}</div>
+                        <div class="file-name">{{ file.split('/')[-1] }}</div>
                     </div>
                 </a>
             </div>
@@ -68,15 +68,144 @@
 </div>
 
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const thumbnails = document.querySelectorAll('.file-thumbnail img');
-        thumbnails.forEach(img => {
-            img.style.opacity = '0';
-            img.addEventListener('load', function() {
-                this.style.transition = 'opacity 0.3s';
-                this.style.opacity = '1';
-            });
+class ThumbnailLoader {
+    constructor() {
+        this.observer = null;
+        this.loadingQueue = new Set();
+        this.init();
+    }
+
+    init() {
+        if ('IntersectionObserver' in window) {
+            this.observer = new IntersectionObserver(
+                (entries) => this.handleIntersection(entries),
+                { rootMargin: '50px' }
+            );
+            this.observeThumbnails();
+        } else {
+            this.loadAllThumbnails();
+        }
+    }
+
+    observeThumbnails() {
+        document.querySelectorAll('.lazy-thumbnail').forEach(img => {
+            this.observer.observe(img);
         });
-    });
+    }
+
+    handleIntersection(entries) {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                this.loadThumbnail(entry.target);
+                this.observer.unobserve(entry.target);
+            }
+        });
+    }
+
+    async loadThumbnail(img) {
+        const filename = img.closest('.file-thumbnail').dataset.filename;
+        if (this.loadingQueue.has(filename)) return;
+        
+        this.loadingQueue.add(filename);
+        const container = img.closest('.file-thumbnail');
+        const icon = container.querySelector('.file-icon');
+        
+        try {
+            if (icon) icon.classList.add('loading');
+            
+            const ready = await this.checkThumbnailReady(filename);
+            
+            if (ready) {
+                this.showThumbnail(img, icon);
+            } else {
+                this.pollThumbnail(filename, img, icon);
+            }
+        } catch (error) {
+            console.error('Error loading thumbnail:', error);
+            if (icon) icon.classList.remove('loading');
+        }
+    }
+
+    async checkThumbnailReady(filename) {
+        try {
+            const response = await fetch(`/check-thumbnail/${encodeURIComponent(filename)}`);
+            const data = await response.json();
+            return data.ready;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async pollThumbnail(filename, img, icon, attempts = 0) {
+        if (attempts > 10) {
+            if (icon) icon.classList.remove('loading');
+            return;
+        }
+
+        setTimeout(async () => {
+            const ready = await this.checkThumbnailReady(filename);
+            if (ready) {
+                this.showThumbnail(img, icon);
+            } else {
+                this.pollThumbnail(filename, img, icon, attempts + 1);
+            }
+        }, 1000 + (attempts * 500));
+    }
+
+    showThumbnail(img, icon) {
+        img.onload = () => {
+            img.style.display = 'block';
+            img.style.opacity = '0';
+            img.style.transition = 'opacity 0.3s ease';
+            setTimeout(() => img.style.opacity = '1', 10);
+            if (icon) {
+                icon.style.opacity = '0';
+                setTimeout(() => icon.style.display = 'none', 300);
+            }
+        };
+        
+        img.onerror = () => {
+            if (icon) icon.classList.remove('loading');
+        };
+        
+        img.src = img.dataset.src;
+    }
+
+    loadAllThumbnails() {
+        document.querySelectorAll('.lazy-thumbnail').forEach(img => {
+            this.loadThumbnail(img);
+        });
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    new ThumbnailLoader();
+});
 </script>
+
+<style>
+.file-icon.loading {
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+}
+
+.lazy-thumbnail {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: cover;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.file-thumbnail {
+    position: relative;
+}
+</style>
 {% endblock %}
