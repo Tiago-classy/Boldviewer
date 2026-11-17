@@ -1,66 +1,67 @@
-{% extends "base.html" %}
-
-{% block title %}View File{% endblock %}
+{% extends 'base.html' %}
+{% block title %}{{ filename.split('/')[-1] }} · BOLD Viewer{% endblock %}
 
 {% block content %}
-    <div class="container">
-        <!-- Breadcrumb -->
-        <nav class="breadcrumb">
-            <a href="{{ url_for('main.dashboard') }}">Home</a>
-            {% for folder in path %}
-                <span>/</span>
-                <a href="{{ url_for('main.dashboard', prefix=folder.path) }}">{{ folder.name }}</a>
-            {% endfor %}
-            <span>/</span>
-            <span>{{ filename.split('/')[-1] }}</span>
-        </nav>
-
-        <!-- Buttons -->
-        <div class="top-buttons">
-            {% set parent_path = '/'.join(filename.split('/')[:-1]) %}
-            <a href="{{ url_for('main.dashboard', prefix=parent_path) }}" class="btn back-btn">⬅ Go Back</a>
-            <a href="{{ file_url }}" download class="btn download-btn">⬇ Download</a>
+<div class="container detail">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="{{ url_for('main.dashboard') }}">Library</a>
+        {% for folder in path %}
+        <span aria-hidden="true">/</span>
+        <a href="{{ url_for('main.dashboard', prefix=folder.path) }}">{{ folder.name }}</a>
+        {% endfor %}
+    </nav>
+    <div class="page-heading">
+        <div class="detail-heading">
+            <a class="icon-button" href="{{ url_for('main.dashboard', prefix=parent_path) }}" aria-label="Back to folder">
+                {{ icon('back') }}
+            </a>
+            <div>
+                <h1 title="{{ filename.split('/')[-1] }}">{{ filename.split('/')[-1] }}</h1>
+                <p class="muted">{{ file_type|capitalize }} · {{ filename.rsplit('.', 1)[-1]|upper }}</p>
+            </div>
         </div>
-
-        <!-- File Preview -->
-        <div class="file-preview">
+        <a href="{{ download_url }}" class="button primary">{{ icon('download') }} Download</a>
+    </div>
+    <div class="preview-workspace" data-preview-workspace>
+        {% if file_type in ['image', 'video'] %}
+        <div class="preview-toolbar" hidden>
             {% if file_type == 'image' %}
-                <img src="{{ file_url }}" alt="Image Preview" loading="lazy">
-            {% elif file_type == 'video' %}
-                <video 
-                    id="my-video"
-                    class="video-js vjs-big-play-centered"
-                    controls
-                    preload="auto"
-                    data-setup='{}'>
-                    <source src="{{ file_url }}" type="video/mp4">
-                    <source src="{{ file_url }}" type="video/webm">
-                    <p class="vjs-no-js">Your browser doesn't support HTML5 video.</p>
-                </video>
-            {% else %}
-                <div class="unsupported-file">
-                    <div class="icon">📄</div>
-                    <p>This file format is not supported for preview. Download to view it.</p>
-                </div>
+            <div class="preview-modes" role="group" aria-label="Image display size">
+                <button type="button" class="text-button" data-image-mode="fit" aria-pressed="true" disabled>Fit</button>
+                <button type="button" class="text-button" data-image-mode="actual" aria-pressed="false" disabled>Actual size</button>
+            </div>
             {% endif %}
+            <span class="muted media-details" data-media-details role="status"></span>
+            <button type="button" class="text-button" data-fullscreen hidden>Fullscreen</button>
+        </div>
+        {% endif %}
+        <div class="file-preview">
+        {% if file_type == 'image' %}
+        <img data-preview src="{{ file_url }}" alt="{{ filename.split('/')[-1] }}" decoding="async">
+        {% elif file_type == 'video' %}
+        <video data-preview aria-label="{{ filename.split('/')[-1] }}" controls preload="metadata" playsinline>
+            <source src="{{ file_url }}" type="{{ mime_type }}">
+            Your browser does not support this video. Use Download to save it.
+        </video>
+        {% else %}
+        <div class="unsupported-file">
+            {{ icon('file') }}
+            <h2>Download to view</h2>
+            <p>A preview isn’t available for this file format.</p>
+            <a href="{{ download_url }}" class="button secondary">Download file</a>
+        </div>
+        {% endif %}
+        <div class="preview-error unsupported-file" role="alert" hidden>
+            <h2>Preview unavailable</h2>
+            <p>The file couldn’t load. Try reloading or downloading it.</p>
+            <a class="button secondary" href="{{ url_for('main.view_file', filename=filename) }}">Reload preview</a>
         </div>
     </div>
-
-    <script nonce="{{ nonce }}">
-        if (document.querySelector('#my-video')) {
-            var player = videojs('my-video');
-        }
-
-        document.querySelectorAll('img').forEach(img => {
-            img.onerror = function() {
-                this.parentElement.innerHTML = `
-                    <div class="unsupported-file">
-                        <div class="icon">🖼️</div>
-                        <p>Unable to load image.</p>
-                        <p>Please try downloading the file.</p>
-                    </div>
-                `;
-            };
-        });
-    </script>
+    </div>
+    <p class="preview-notice muted" data-preview-notice role="status" hidden></p>
+    <div class="preview-caption">
+        <span>{{ filename.split('/')[-1] }}</span>
+        <span>{{ file_type|capitalize }} preview</span>
+    </div>
+</div>
 {% endblock %}

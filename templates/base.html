@@ -1,62 +1,97 @@
+{% from 'macros/icons.html' import icon %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}BOLD VIEWER{% endblock %}</title>
+    <meta name="color-scheme" content="dark">
+    <title>{% block title %}BOLD Viewer · Media library{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📁</text></svg>">
+    <link rel="icon" href="{{ url_for('static', filename='images/mark.svg') }}" type="image/svg+xml">
     {% block extra_css %}{% endblock %}
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+    {% block extra_js %}{% endblock %}
 </head>
 <body>
-    <header class="main-header">
-        <nav class="navbar">
-            <div class="nav-container">
-                <div class="nav-brand">
-                    <a href="{{ url_for('main.dashboard') }}" class="brand-link">
-                        <span class="brand-text">BOLD</span>
-                        <span class="brand-subtitle">VIEWER</span>
-                    </a>
-                </div>
-                <div class="nav-menu">
-                    <a href="{{ url_for('main.dashboard') }}" class="nav-link">
-                        <span class="nav-icon">📁</span>
-                        Files
-                    </a>
-                    <a href="{{ url_for('auth.logout') }}" class="nav-link logout">
-                        <span class="nav-icon">🚪</span>
-                        Logout
-                    </a>
+<a class="skip-link" href="#main">Skip to content</a>
+{% set library_shell = current_user.is_authenticated or request.endpoint in ['main.dashboard', 'main.view_file'] %}
+{% if library_shell %}
+<div class="app-shell">
+    <aside class="sidebar" id="navigation" aria-label="Main navigation">
+        <a href="{{ url_for('main.dashboard') }}" class="brand" aria-label="BOLD Viewer home">
+            <span class="wordmark">BOLD.</span>
+            <span class="brand-subtitle">Viewer</span>
+        </a>
+        <div class="workspace-label">Your workspace</div>
+        <nav class="side-nav">
+            <a href="{{ url_for('main.dashboard') }}" class="nav-link active" {% if request.endpoint == 'main.dashboard' and not current_prefix %}aria-current="page"{% endif %}>
+                {{ icon('grid') }} Media library
+            </a>
+        </nav>
+        {% if s3_contents is defined and s3_contents.folders %}
+        <div class="workspace-label">In this folder</div>
+        <nav class="side-nav folder-nav" aria-label="Folders">
+            {% for folder in s3_contents.folders %}
+            <a class="nav-link" href="{{ url_for('main.dashboard', prefix=folder) }}">
+                {{ icon('folder') }}
+                <span>{{ folder.rstrip('/').split('/')[-1] }}</span>
+            </a>
+            {% endfor %}
+        </nav>
+        {% endif %}
+        <div class="sidebar-bottom">
+            <div class="account">
+                <span class="account-avatar">{{ (current_user.username|default('B'))[:1]|upper }}</span>
+                <div>
+                    <span>{{ current_user.username|default('Workspace') }}</span>
+                    <small>Private library</small>
                 </div>
             </div>
-        </nav>
-    </header>
-
-    <main class="main-content">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div class="flash-messages">
-                    {% for category, message in messages %}
-                        <div class="flash-message flash-{{ category }}">
-                            {{ message }}
-                        </div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
-        
-        {% block content %}{% endblock %}
-    </main>
-
-    <footer class="main-footer">
-        <div class="footer-container">
-            <p class="footer-text">© 2025 BOLD VIEWER. All rights reserved.</p>
+            <a href="{{ url_for('auth.logout') }}" class="nav-link">{{ icon('logout') }} Sign out</a>
         </div>
-    </footer>
-
-    {% block extra_js %}{% endblock %}
+    </aside>
+    <div class="app-main">
+        <header class="topbar">
+            <button class="icon-button menu-toggle" type="button" aria-label="Open navigation" aria-controls="navigation" aria-expanded="false">
+                {{ icon('menu') }}
+            </button>
+            <span class="topbar-scope">
+                BOLD Viewer <span aria-hidden="true">/</span>
+                <span class="scope-current">{{ 'Preview' if request.endpoint == 'main.view_file' else 'Library' }}</span>
+            </span>
+            <span class="topbar-note">Private workspace</span>
+        </header>
+{% else %}
+<header class="auth-header">
+    <a href="{{ url_for('auth.root') }}" class="brand">
+        <span class="wordmark">BOLD.</span>
+        <span class="brand-subtitle">Viewer</span>
+    </a>
+    <span class="muted">Private media workspace</span>
+</header>
+{% endif %}
+<main id="main" class="main-content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-messages" role="status">
+            {% for category, message in messages %}
+            <p class="flash-message flash-{{ category }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+</main>
+{% if library_shell %}
+        <footer class="workspace-footer">
+            <span>BOLD Viewer</span>
+            <span>Your files. In focus.</span>
+        </footer>
+    </div>
+</div>
+{% endif %}
 </body>
 </html>

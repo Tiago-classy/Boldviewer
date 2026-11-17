@@ -1,74 +1,53 @@
-from flask import Flask, render_template, request, make_response
+from flask import Flask, render_template, request
 from flask_login import LoginManager
-from datetime import timedelta
-from config import Config  
-from routes.auth_routes import auth, init_login_manager 
+
+from config import Config
+from routes.auth_routes import auth, init_login_manager
 from routes.main_routes import main
-import secrets
 
 app = Flask(__name__)
-@app.after_request
-def apply_csp(response):
-    nonce = secrets.token_urlsafe(16)
-    csp = (
-        f"default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}'; "
-        f"style-src 'self' https://fonts.googleapis.com; "
-        f"font-src 'self' https://fonts.gstatic.com; "
-        f"img-src 'self' https://ic4u-ig-videos.s3.amazonaws.com data:; "
-        f"media-src 'self' https://ic4u-ig-videos.s3.amazonaws.com;"
-    )
-    response.headers['Content-Security-Policy'] = csp
-    response.headers['Permissions-Policy'] = 'unload=()'
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    response.headers['Referrer-Policy'] = 'no-referrer'
-    request.csp_nonce = nonce
-    return response
-@app.context_processor
-def inject_nonce():
-    return dict(nonce=getattr(request, 'csp_nonce', ''))
+app.config.from_object(Config)
+
+login_manager = LoginManager(app)
+login_manager.session_protection = 'strong'
+login_manager.refresh_view = 'auth.login'
+init_login_manager(login_manager)
+app.register_blueprint(auth)
+app.register_blueprint(main)
+
 
 @app.after_request
-def add_security_headers(response):
+def security_headers(response):
     for header, value in Config.SECURITY_HEADERS.items():
         response.headers[header] = value
+    bucket = Config.S3_BUCKET_NAME or ''
+    region = Config.REGION_NAME
+    media_origins = (
+        f'https://{bucket}.s3.amazonaws.com https://{bucket}.s3.{region}.amazonaws.com '
+        f'https://s3.amazonaws.com https://s3.{region}.amazonaws.com'
+    )
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        f"img-src 'self' data: {media_origins}; media-src 'self' {media_origins}; "
+        "connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
+    )
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+    if request.endpoint != 'static' and request.endpoint != 'main.get_thumbnail':
+        response.headers['Cache-Control'] = 'no-store'
     return response
-class ExtendedConfig(Config):
-    PERMANENT_SESSION_LIFETIME = timedelta(minutes=30)
-    SESSION_REFRESH_EACH_REQUEST = True
-    SESSION_COOKIE_SECURE = True  # For HTTPS
-    SESSION_COOKIE_HTTPONLY = True  # Prevent JavaScript access
-    SESSION_COOKIE_SAMESITE = 'Lax'  # CSRF protection
 
-app.config.from_object(ExtendedConfig)
 
-# Initialize LoginManager with enhanced security
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = "auth.login"
-login_manager.login_message = "Please log in to access this page."
-login_manager.login_message_category = "warning"
-login_manager.session_protection = "strong"
-login_manager.refresh_view = "auth.login"
-login_manager.needs_refresh_message = "Session timed out, please login again"
-login_manager.needs_refresh_message_category = "warning"
-
-# Initialize login manager
-init_login_manager(login_manager)
-
-# Register blueprints
-app.register_blueprint(auth)
-app.register_blueprint(main, url_prefix="/")
-
-# Error handlers
 @app.errorhandler(404)
 def not_found_error(error):
     return render_template('errors/404.html'), 404
+
 
 @app.errorhandler(500)
 def internal_error(error):
     return render_template('errors/500.html'), 500
 
-if __name__ == "__main__":
-    app.run(debug=True)
+
+if __name__ == '__main__':
+    app.run(debug=Config.DEBUG)

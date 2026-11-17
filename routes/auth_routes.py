@@ -1,8 +1,7 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request, session
 from flask_login import UserMixin, login_user, logout_user, login_required, current_user
 import bcrypt
-from functools import wraps
-from datetime import datetime, timedelta  # Add this import
+from datetime import datetime, timedelta
 
 auth = Blueprint("auth", __name__)
 
@@ -105,7 +104,7 @@ def login():
                 next_page = request.args.get('next')
                 
                 # Validate the next page to prevent open redirect vulnerability
-                if not next_page or not next_page.startswith('/'):
+                if not next_page or not next_page.startswith('/') or next_page.startswith('//') or '\\' in next_page:
                     next_page = url_for('main.dashboard')
                     
                 return redirect(next_page)

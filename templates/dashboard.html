@@ -1,80 +1,148 @@
-{% extends "base.html" %}
-
+{% extends 'base.html' %}
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
 {% endblock %}
-
 {% block extra_js %}
-<script src="{{ url_for('static', filename='js/thumbnails.js') }}"></script>
+<script src="{{ url_for('static', filename='js/thumbnails.js') }}" defer></script>
+<script src="{{ url_for('static', filename='js/library.js') }}" defer></script>
 {% endblock %}
 
 {% block content %}
-
-<div class="container">
-    <div class="header">
-        <h1>Files</h1>
-    </div>
-
-    <!-- Breadcrumb -->
-    <nav class="breadcrumb">
-        <a href="{{ url_for('main.dashboard') }}">Home</a>
+<div class="container library" data-library>
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <a href="{{ url_for('main.dashboard') }}">Library</a>
         {% for crumb in breadcrumbs %}
-            <span>/</span>
-            <a href="{{ crumb.url }}">{{ crumb.name }}</a>
+        <span aria-hidden="true">/</span>
+        <a href="{{ crumb.url }}" {% if loop.last %}aria-current="page"{% endif %}>{{ crumb.name }}</a>
         {% endfor %}
     </nav>
-
-    <!-- Files Grid -->
-    <div class="files-grid">
-        <!-- Folders -->
-        {% for folder in s3_contents.folders %}
-            <div class="file-card">
-                <a href="{{ url_for('main.dashboard', prefix=folder) }}">
-                    <div class="file-thumbnail">
-                        <div class="file-icon">📁</div>
-                    </div>
-                    <div class="file-info">
-                        <div class="file-name">{{ folder.rstrip('/').split('/')[-1] }}</div>
-                    </div>
-                </a>
-            </div>
-        {% endfor %}
-
-        <!-- Files -->
-        {% for file in s3_contents.files %}
-            <div class="file-card">
-                <a href="{{ url_for('main.view_file', filename=file) }}">
-                    <div class="file-thumbnail" data-filename="{{ file }}">
-                        {% if file.lower().endswith(('.mp4', '.webm', '.ogg')) %}
-                            <div class="file-icon loading">🎥</div>
-                            <img class="lazy-thumbnail" data-src="{{ url_for('main.get_thumbnail', filename=file) }}" 
-                                 alt="Video thumbnail">
-                        {% elif file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')) %}
-                            <div class="file-icon loading">🖼️</div>
-                            <img class="lazy-thumbnail" data-src="{{ url_for('main.get_thumbnail', filename=file) }}"
-                                 alt="Image thumbnail">
-                        {% else %}
-                            <div class="file-icon">📄</div>
-                        {% endif %}
-                    </div>
-                    <div class="file-info">
-                        <div class="file-name">{{ file.split('/')[-1] }}</div>
-                    </div>
-                </a>
-            </div>
-        {% endfor %}
+    <div class="page-heading">
+        <div>
+            <h1>{{ current_prefix.rstrip('/').split('/')[-1] if current_prefix else 'Media library' }}</h1>
+            {% if load_error %}
+            <p class="muted">Contents unavailable</p>
+            {% else %}
+            <p class="muted" data-summary>
+                {{ s3_contents.folders|length }} folders <span aria-hidden="true">·</span>
+                {{ files|length }} files{% if paginated %} on this page{% endif %}
+            </p>
+            {% endif %}
+        </div>
+        <a class="button secondary refresh-button" href="{{ url_for('main.dashboard', prefix=current_prefix, refresh=1) }}">
+            {{ icon('refresh') }} Reload
+        </a>
     </div>
 
-    {% if not s3_contents.folders and not s3_contents.files %}
-        <div class="empty-state">
-            <div class="icon">📂</div>
-            <h3>No files or folders found</h3>
-            <p>This folder is empty</p>
+    {% if load_error %}
+    <div class="empty-state error-state" role="alert">
+        <h2>Library unavailable</h2>
+        <p>We couldn’t load this folder. Please try again.</p>
+        <a class="button primary" href="{{ url_for('main.dashboard', prefix=current_prefix, refresh=1) }}">Try again</a>
+    </div>
+    {% else %}
+        {% if s3_contents.folders or files %}
+        <div class="library-controls" hidden>
+            <label class="search-field">
+                {{ icon('search') }}
+                <span class="sr-only">Search {{ 'this page' if paginated else 'this folder' }}</span>
+                <input type="search" data-search placeholder="Search" autocomplete="off">
+            </label>
+            <label class="sort-control">
+                <span class="sr-only">Sort files</span>
+                <select data-sort aria-label="Sort files">
+                    <option value="name">Name A–Z</option>
+                    <option value="name-desc">Name Z–A</option>
+                    <option value="newest">Newest first</option>
+                    <option value="largest">Largest first</option>
+                </select>
+            </label>
+            <div class="view-controls" role="group" aria-label="Library view">
+                <button type="button" class="icon-button" data-view="grid" aria-label="Grid view" aria-pressed="true">{{ icon('grid') }}</button>
+                <button type="button" class="icon-button" data-view="list" aria-label="List view" aria-pressed="false">{{ icon('list') }}</button>
+            </div>
         </div>
+        <div class="type-filters" role="group" aria-label="Filter files by type" hidden>
+            <button type="button" data-filter="all" aria-pressed="true"><span>All files</span><strong>{{ files|length }}</strong></button>
+            <button type="button" data-filter="image" aria-pressed="false"><span>Images</span><strong>{{ counts.image }}</strong></button>
+            <button type="button" data-filter="video" aria-pressed="false"><span>Videos</span><strong>{{ counts.video }}</strong></button>
+            <button type="button" data-filter="file" aria-pressed="false"><span>Documents & other</span><strong>{{ counts.file }}</strong></button>
+        </div>
+        {% endif %}
+
+        {% if s3_contents.folders %}
+        <section class="folder-section" aria-labelledby="folders-title">
+            <div class="section-heading">
+                <h2 id="folders-title">Folders</h2>
+                <span class="muted" data-folder-count>{{ s3_contents.folders|length }}</span>
+            </div>
+            <div class="folders-grid">
+                {% for folder in s3_contents.folders %}
+                <a class="folder-link" data-folder data-name="{{ folder.rstrip('/').split('/')[-1]|lower }}" href="{{ url_for('main.dashboard', prefix=folder) }}">
+                    {{ icon('folder') }}
+                    <span>{{ folder.rstrip('/').split('/')[-1] }}</span>
+                    {{ icon('arrow', 'folder-arrow') }}
+                </a>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
+        {% if files %}
+        <section class="media-section" aria-labelledby="files-title">
+            <div class="section-heading">
+                <h2 id="files-title">Files</h2>
+                <div class="section-utilities">
+                    <button type="button" class="text-button" data-retry-previews hidden>Retry previews</button>
+                    <span class="muted" data-result-count role="status" aria-live="polite">{{ files|length }} files</span>
+                </div>
+            </div>
+            <div class="files-grid" data-files>
+                {% for file in files %}
+                <article class="file-card" data-file data-kind="{{ file.kind }}" data-name="{{ file.name|lower }}" data-size="{{ file.size if file.size is not none else -1 }}" data-modified="{{ file.timestamp }}">
+                    <a href="{{ url_for('main.view_file', filename=file.key) }}" class="file-link" title="Open {{ file.name }}">
+                        <div class="file-thumbnail" data-filename="{{ file.key }}">
+                            <div class="file-fallback">
+                                {{ icon(file.kind) }}
+                                <span>{{ 'Document' if file.kind == 'file' else file.kind|capitalize }}</span>
+                            </div>
+                            {% if file.kind != 'file' %}
+                            <img class="lazy-thumbnail" data-status-url="{{ url_for('main.check_thumbnail', filename=file.key) }}" alt="" width="640" height="480" decoding="async">
+                            {% endif %}
+                            <span class="media-format">{{ file.extension }}</span>
+                        </div>
+                        <div class="file-info">
+                            <h3 class="file-name">{{ file.name }}</h3>
+                            <div class="file-meta">
+                                <span>{{ file.kind|capitalize }}{% if file.size_label %} · {{ file.size_label }}{% endif %}</span>
+                                {% if file.modified %}<time datetime="{{ file.modified.isoformat() }}">{{ file.modified.strftime('%d %b %Y') }}</time>{% endif %}
+                            </div>
+                            <span class="file-action"><span class="sr-only">{{ 'Play video' if file.kind == 'video' else 'Open file' }}</span>{{ icon('arrow') }}</span>
+                        </div>
+                    </a>
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
+        <div class="empty-state search-empty" hidden>
+            <h2>No matches</h2>
+            <p>Try another name or file type.</p>
+            <button type="button" class="button secondary" data-clear>Clear filters</button>
+        </div>
+        {% if not s3_contents.folders and not files %}
+        <div class="empty-state">
+            <h2>This folder is empty</h2>
+            <p>Files added to this S3 folder will appear here.</p>
+            {% if current_prefix %}<a class="button secondary" href="{{ url_for('main.dashboard') }}">Back to library</a>{% endif %}
+        </div>
+        {% endif %}
+        {% if s3_contents.next_token %}
+        <nav class="pagination" aria-label="More files">
+            <p class="muted">More files are available in this folder.</p>
+            <a class="button primary" href="{{ url_for('main.dashboard', prefix=current_prefix, cursor=s3_contents.next_token) }}">Next page {{ icon('arrow') }}</a>
+        </nav>
+        {% endif %}
     {% endif %}
 </div>
-
-
-
-
 {% endblock %}
